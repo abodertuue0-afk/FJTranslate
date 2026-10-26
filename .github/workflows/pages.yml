@@ -1,0 +1,100 @@
+name: Deploy Nousa Translator (GitHub Pages)
+
+# ينشر تطبيق الويب «مترجم نوسة» من مجلد docs مجاناً على GitHub Pages.
+# قبل النشر ينزّل المكتبات اللازمة للعمل دون إنترنت (محرك الترجمة، قارئ الصور)
+# ويضعها داخل الموقع نفسه، حتى يحفظها الآيفون محلياً.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install offline libraries
+        run: |
+          set -e
+          mkdir -p /tmp/libs && cd /tmp/libs
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund @huggingface/transformers@3 tesseract.js@6 esbuild
+          npm install --no-audit --no-fund @tesseract.js-data/eng @tesseract.js-data/ara || echo "language packages not found, will use tessdata_fast"
+
+      - name: Bundle translation engine (Transformers.js + ONNX Runtime)
+        run: |
+          set -e
+          V=docs/vendor
+          mkdir -p $V/ort
+          echo "export { pipeline, env } from '@huggingface/transformers';" > /tmp/libs/entry.mjs
+          if /tmp/libs/node_modules/.bin/esbuild /tmp/libs/entry.mjs --bundle --format=esm --platform=browser \
+               --minify --log-level=warning --outfile=$V/transformers.bundle.js; then
+            echo "esbuild bundle OK"
+          else
+            echo "esbuild failed, copying prebuilt bundle"
+            cp /tmp/libs/node_modules/@huggingface/transformers/dist/transformers.min.js $V/transformers.bundle.js
+          fi
+          ORT_PKG=$(find /tmp/libs/node_modules/@huggingface/transformers/node_modules -maxdepth 2 -path "*onnxruntime-web/package.json" 2>/dev/null | head -1)
+          [ -z "$ORT_PKG" ] && ORT_PKG=/tmp/libs/node_modules/onnxruntime-web/package.json
+          ORT_DIR=$(dirname "$ORT_PKG")/dist
+          cp "$ORT_DIR"/ort-wasm*.wasm $V/ort/
+          cp "$ORT_DIR"/ort-wasm*.mjs $V/ort/ 2>/dev/null || true
+
+      - name: Copy OCR engine (Tesseract.js) and language data
+        run: |
+          set -e
+          V=docs/vendor
+          mkdir -p $V/tesseract $V/tessdata
+          cp /tmp/libs/node_modules/tesseract.js/dist/tesseract.min.js $V/tesseract/
+          cp /tmp/libs/node_modules/tesseract.js/dist/worker.min.js $V/tesseract/
+          CORE=$(dirname $(find /tmp/libs/node_modules -path "*tesseract.js-core/package.json" | head -1))
+          cp "$CORE"/tesseract-core*.wasm.js $V/tesseract/
+          cp "$CORE"/tesseract-core*.wasm $V/tesseract/ 2>/dev/null || true
+          for L in eng ara; do
+            F=$(find /tmp/libs/node_modules/@tesseract.js-data/$L -name "$L.traineddata.gz" 2>/dev/null | grep best_int | head -1 || true)
+            [ -z "$F" ] && F=$(find /tmp/libs/node_modules/@tesseract.js-data/$L -name "$L.traineddata.gz" 2>/dev/null | head -1 || true)
+            if [ -n "$F" ]; then
+              cp "$F" $V/tessdata/$L.traineddata.gz
+            else
+              curl -fsSL "https://github.com/tesseract-ocr/tessdata_fast/raw/main/$L.traineddata" | gzip -9 > $V/tessdata/$L.traineddata.gz
+            fi
+          done
+
+      - name: Show site contents
+        run: |
+          du -sh docs
+          ls -lah docs/vendor docs/vendor/ort docs/vendor/tesseract docs/vendor/tessdata
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

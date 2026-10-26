@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>مترجم نوسة</title>
+  <meta name="description" content="مترجم إنجليزي ⇄ عربي يعمل على الجهاز دون إنترنت، مع نطق ومصطلحات قانونية.">
+  <meta name="theme-color" content="#ffd9ea" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#221a2b" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="مترجم نوسة">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="css/styles.css">
+  <script>
+    // تطبيق الوضع المحفوظ قبل الرسم لتجنب الوميض.
+    try {
+      var s = JSON.parse(localStorage.getItem('nousa.settings.v1') || '{}');
+      if (s.theme === 'dark' || s.theme === 'light') document.documentElement.dataset.theme = s.theme;
+    } catch (e) {}
+  </script>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <svg class="bow" viewBox="0 0 64 40" aria-hidden="true">
+          <path d="M32 20 C22 4 6 2 4 12 C2 22 14 34 32 20 Z" fill="var(--pink)"/>
+          <path d="M32 20 C42 4 58 2 60 12 C62 22 50 34 32 20 Z" fill="var(--pink)"/>
+          <path d="M30 22 L22 38 L28 36 L32 40 Z M34 22 L42 38 L36 36 L32 40 Z" fill="var(--pink-deep)"/>
+          <circle cx="32" cy="20" r="6" fill="var(--pink-deep)"/>
+          <circle cx="14" cy="13" r="2.2" fill="#fff" opacity=".7"/>
+          <circle cx="50" cy="13" r="2.2" fill="#fff" opacity=".7"/>
+        </svg>
+        <div>
+          <h1>مترجم نوسة</h1>
+          <p class="tagline">إنجليزي ⇄ عربي · لطالبة القانون ⚖️</p>
+        </div>
+      </div>
+      <span id="netChip" class="chip" hidden></span>
+    </header>
+
+    <main id="screens">
+      <!-- ============ الترجمة ============ -->
+      <section id="screen-translate" class="screen active" aria-label="الترجمة">
+        <div id="installCard" class="notice lavender" hidden>
+          <strong>🎀 أضيفي التطبيق إلى الشاشة الرئيسية أولاً</strong>
+          <ol class="steps">
+            <li>اضغطي زر <b>المشاركة</b> <span class="ios-share" aria-hidden="true"></span> أسفل Safari.</li>
+            <li>اختاري <b>«إضافة إلى الشاشة الرئيسية»</b>.</li>
+            <li>اضغطي <b>«إضافة»</b>.</li>
+            <li>افتحي «مترجم نوسة» من أيقونته، ثم نزّلي نموذج الترجمة من هناك.</li>
+          </ol>
+          <p class="small">مهم: تخزين التطبيق المضاف للشاشة منفصل عن Safari، لذلك نزّلي النماذج من داخله.</p>
+        </div>
+
+        <div id="modelNotice" class="notice pink" hidden>
+          <div id="modelNoticeText"></div>
+          <button id="modelNoticeBtn" class="btn primary small" type="button">تنزيل النموذج</button>
+          <div id="dlProgressWrap" class="progress-wrap" hidden>
+            <div class="progress"><div id="dlProgress" class="bar"></div></div>
+            <div id="dlProgressText" class="small"></div>
+          </div>
+        </div>
+
+        <div class="langbar">
+          <button id="srcChip" class="lang-chip active" type="button"></button>
+          <button id="swapBtn" class="swap" type="button" aria-label="تبديل اللغتين">⇄</button>
+          <button id="dstChip" class="lang-chip" type="button"></button>
+        </div>
+
+        <div class="card input-card">
+          <div class="card-head">
+            <span id="srcLabel" class="card-label"></span>
+            <button id="clearBtn" class="icon-btn ghost" type="button" aria-label="مسح النص" hidden>✕</button>
+          </div>
+          <textarea id="inputText" rows="5" maxlength="5000" spellcheck="true" autocapitalize="sentences"></textarea>
+          <div class="toolbar">
+            <button id="speakSrc" class="icon-btn" type="button" aria-label="استماع للنص الأصلي">🔊</button>
+            <button id="pasteBtn" class="icon-btn" type="button" aria-label="لصق">📋</button>
+            <button id="ocrBtn" class="icon-btn" type="button" aria-label="ترجمة صورة">📷</button>
+            <button id="importBtn" class="icon-btn" type="button" aria-label="استيراد ملف">📄</button>
+            <span class="spacer"></span>
+            <span id="charCount" class="count">0/5000</span>
+          </div>
+          <div id="srcSpeechCtl" class="speech-ctl" hidden>
+            <button class="pill" data-act="pause" data-ch="src" type="button">⏸ إيقاف مؤقت</button>
+            <button class="pill" data-act="replay" data-ch="src" type="button">↻ إعادة</button>
+          </div>
+          <div id="importStatus" class="small status-line" hidden></div>
+          <input id="ocrInput" type="file" accept="image/*" hidden>
+          <input id="fileInput" type="file" accept=".txt,.md,.csv,.srt,.rtf,.docx,.pdf,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/*" hidden>
+        </div>
+
+        <button id="translateBtn" class="btn primary big" type="button">ترجمي 💗</button>
+
+        <div id="errorBox" class="notice error" hidden></div>
+
+        <div class="card output-card">
+          <div class="card-head">
+            <span id="dstLabel" class="card-label accent"></span>
+            <span id="busy" class="spinner" hidden></span>
+          </div>
+          <div id="outputText" class="output" aria-live="polite"></div>
+          <div class="toolbar">
+            <button id="speakDst" class="icon-btn" type="button" aria-label="استماع للترجمة">🔊</button>
+            <select id="rateQuick" class="rate" aria-label="سرعة النطق">
+              <option value="0.5">0.5×</option>
+              <option value="0.75">0.75×</option>
+              <option value="1">1×</option>
+              <option value="1.25">1.25×</option>
+              <option value="1.5">1.5×</option>
+            </select>
+            <span class="spacer"></span>
+            <button id="favBtn" class="icon-btn" type="button" aria-label="إضافة للمفضلة">♡</button>
+            <button id="copyBtn" class="icon-btn" type="button" aria-label="نسخ الترجمة">⧉</button>
+            <button id="shareBtn" class="icon-btn" type="button" aria-label="مشاركة">↗</button>
+          </div>
+          <div id="dstSpeechCtl" class="speech-ctl" hidden>
+            <button class="pill" data-act="pause" data-ch="dst" type="button">⏸ إيقاف مؤقت</button>
+            <button class="pill" data-act="replay" data-ch="dst" type="button">↻ إعادة</button>
+          </div>
+          <div id="sourceTag" class="small source-tag" hidden></div>
+        </div>
+      </section>
+
+      <!-- ============ العبارات ============ -->
+      <section id="screen-phrases" class="screen" aria-label="العبارات الجاهزة">
+        <h2 class="screen-title">🌸 عبارات جاهزة</h2>
+        <p class="small muted">ترجمات معدّة مسبقاً، تعمل فوراً دون نموذج ودون إنترنت.</p>
+        <div id="phraseTabs" class="seg"></div>
+        <div id="phraseList" class="list"></div>
+      </section>
+
+      <!-- ============ المصطلحات القانونية ============ -->
+      <section id="screen-legal" class="screen" aria-label="المصطلحات القانونية">
+        <h2 class="screen-title">⚖️ مصطلحات قانونية</h2>
+        <input id="legalSearch" class="search" type="search" placeholder="ابحثي بالعربية أو الإنجليزية…" autocomplete="off">
+        <div id="legalTabs" class="seg scroll"></div>
+        <div id="legalList" class="list"></div>
+      </section>
+
+      <!-- ============ السجل والمفضلة ============ -->
+      <section id="screen-history" class="screen" aria-label="السجل والمفضلة">
+        <h2 class="screen-title">📒 السجل والمفضلة</h2>
+        <div class="seg" id="historyTabs">
+          <button class="seg-btn active" data-tab="all" type="button">السجل</button>
+          <button class="seg-btn" data-tab="fav" type="button">المفضلة ♥</button>
+        </div>
+        <input id="historySearch" class="search" type="search" placeholder="ابحثي في الترجمات…" autocomplete="off">
+        <div id="historyList" class="list"></div>
+        <button id="clearHistoryBtn" class="btn ghost danger" type="button">مسح السجل</button>
+      </section>
+
+      <!-- ============ الإعدادات ============ -->
+      <section id="screen-settings" class="screen" aria-label="الإعدادات">
+        <h2 class="screen-title">⚙️ الإعدادات</h2>
+
+        <div class="card">
+          <h3>📦 نماذج الترجمة (دون إنترنت)</h3>
+          <p class="small muted">نموذج Opus-MT يعمل داخل الجهاز. يُنزَّل مرة واحدة لكل اتجاه، ثم تعمل الترجمة دون إنترنت.</p>
+          <div id="modelRows"></div>
+          <div id="storageInfo" class="small muted"></div>
+        </div>
+
+        <div class="card">
+          <h3>📷 قراءة النص من الصور</h3>
+          <p class="small muted">يُنزَّل قارئ الصور (العربية والإنجليزية) مرة واحدة.</p>
+          <div class="row">
+            <span id="ocrStatus">—</span>
+            <button id="ocrPrepareBtn" class="btn small" type="button">تجهيز قراءة الصور</button>
+          </div>
+          <div id="ocrPrepareText" class="small muted"></div>
+        </div>
+
+        <div class="card">
+          <h3>🔊 النطق</h3>
+          <label class="field">
+            <span>سرعة النطق: <b id="rateLabel">1×</b></span>
+            <input id="rateSlider" type="range" min="0.5" max="1.5" step="0.05" dir="ltr">
+          </label>
+          <label class="field">
+            <span>الصوت العربي</span>
+            <select id="voiceAr"></select>
+          </label>
+          <button id="testAr" class="btn small" type="button">▶︎ تجربة الصوت العربي</button>
+          <label class="field">
+            <span>الصوت الإنجليزي</span>
+            <select id="voiceEn"></select>
+          </label>
+          <button id="testEn" class="btn small" type="button">▶︎ تجربة الصوت الإنجليزي</button>
+          <label class="switch-row">
+            <span>إظهار الأصوات المحلية فقط (دون إنترنت)</span>
+            <input id="onlyLocal" type="checkbox">
+          </label>
+          <details class="guide">
+            <summary>طريقة تنزيل أصوات أوضح على الآيفون</summary>
+            <ol class="steps">
+              <li>افتحي «الإعدادات».</li>
+              <li>اختاري «تسهيلات الاستخدام».</li>
+              <li>اختاري «المحتوى المنطوق».</li>
+              <li>اختاري «الأصوات».</li>
+              <li>اختاري «العربية» ونزّلي صوتاً (الأفضل: محسّن أو ممتاز).</li>
+              <li>ارجعي واختاري «الإنجليزية» ونزّلي صوتاً.</li>
+              <li>أغلقي مترجم نوسة وافتحيه من جديد.</li>
+            </ol>
+          </details>
+        </div>
+
+        <div class="card">
+          <h3>✨ الترجمة</h3>
+          <label class="switch-row"><span>ترجمة تلقائية أثناء الكتابة</span><input id="autoTranslate" type="checkbox"></label>
+          <label class="switch-row"><span>كشف لغة النص تلقائياً</span><input id="autoDetect" type="checkbox"></label>
+          <label class="switch-row"><span>حفظ الترجمات في السجل</span><input id="saveHistory" type="checkbox"></label>
+        </div>
+
+        <div class="card">
+          <h3>🎨 المظهر</h3>
+          <div class="seg" id="themeSeg">
+            <button class="seg-btn" data-theme="system" type="button">تلقائي</button>
+            <button class="seg-btn" data-theme="light" type="button">فاتح</button>
+            <button class="seg-btn" data-theme="dark" type="button">داكن</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>✈️ اختبار العمل دون إنترنت</h3>
+          <ol class="steps">
+            <li>فعّلي «وضع الطيران».</li>
+            <li>اضغطي «ابدئي الاختبار».</li>
+            <li>اضغطي 🔊 بجانب كل نتيجة.</li>
+          </ol>
+          <button id="selfTestBtn" class="btn primary small" type="button">ابدئي الاختبار</button>
+          <div id="selfTestResults"></div>
+        </div>
+
+        <div class="card">
+          <h3>💗 عن التطبيق</h3>
+          <p class="small muted">مترجم نوسة — الترجمة والسجل والمفضلة على جهازك فقط، ولا يُرسل نصك إلى أي خادم.</p>
+          <p class="small muted" id="versionInfo"></p>
+        </div>
+      </section>
+    </main>
+
+    <nav class="tabbar" aria-label="التنقل">
+      <button class="tab active" data-screen="translate" type="button"><span>💬</span>ترجمة</button>
+      <button class="tab" data-screen="phrases" type="button"><span>🌸</span>عبارات</button>
+      <button class="tab" data-screen="legal" type="button"><span>⚖️</span>قانوني</button>
+      <button class="tab" data-screen="history" type="button"><span>📒</span>السجل</button>
+      <button class="tab" data-screen="settings" type="button"><span>⚙️</span>الإعدادات</button>
+    </nav>
+
+    <div id="toast" class="toast" hidden></div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

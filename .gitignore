@@ -1,0 +1,8 @@
+FJTranslate.xcodeproj/
+FJTranslate/Info.plist
+build/
+DerivedData/
+*.ipa
+Payload/
+.DS_Store
+xcuserdata/
