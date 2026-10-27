@@ -1,100 +1,119 @@
-name: Deploy Nousa Translator (GitHub Pages)
+name: Prepare Nousa Translator offline files
 
-# ينشر تطبيق الويب «مترجم نوسة» من مجلد docs مجاناً على GitHub Pages.
-# قبل النشر ينزّل المكتبات اللازمة للعمل دون إنترنت (محرك الترجمة، قارئ الصور)
-# ويضعها داخل الموقع نفسه، حتى يحفظها الآيفون محلياً.
+# Pages is configured to publish main/docs, so this workflow prepares the files
+# and commits them to main. GitHub Pages then publishes them automatically.
 
 on:
   push:
     branches: [main]
     paths:
-      - 'docs/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
-  group: pages
-  cancel-in-progress: true
+  group: prepare-nousa-offline-files
+  cancel-in-progress: false
 
 jobs:
-  build:
+  prepare:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
 
-      - uses: actions/setup-node@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Install offline libraries
+      - name: Install libraries
         run: |
           set -e
-          mkdir -p /tmp/libs && cd /tmp/libs
-          npm init -y > /dev/null
+          mkdir -p /tmp/libs
+          cd /tmp/libs
+          npm init -y >/dev/null
           npm install --no-audit --no-fund @huggingface/transformers@3 tesseract.js@6 esbuild
-          npm install --no-audit --no-fund @tesseract.js-data/eng @tesseract.js-data/ara || echo "language packages not found, will use tessdata_fast"
+          npm install --no-audit --no-fund @tesseract.js-data/eng @tesseract.js-data/ara || true
 
-      - name: Bundle translation engine (Transformers.js + ONNX Runtime)
+      - name: Build translation bundle and copy ONNX runtime files
         run: |
-          set -e
-          V=docs/vendor
-          mkdir -p $V/ort
-          echo "export { pipeline, env } from '@huggingface/transformers';" > /tmp/libs/entry.mjs
-          if /tmp/libs/node_modules/.bin/esbuild /tmp/libs/entry.mjs --bundle --format=esm --platform=browser \
-               --minify --log-level=warning --outfile=$V/transformers.bundle.js; then
-            echo "esbuild bundle OK"
-          else
-            echo "esbuild failed, copying prebuilt bundle"
-            cp /tmp/libs/node_modules/@huggingface/transformers/dist/transformers.min.js $V/transformers.bundle.js
+          set -euo pipefail
+          V="$GITHUB_WORKSPACE/docs/vendor"
+          mkdir -p "$V/ort"
+          printf "%s\n" "export { pipeline, env } from '@huggingface/transformers';" > /tmp/libs/entry.mjs
+
+          /tmp/libs/node_modules/.bin/esbuild /tmp/libs/entry.mjs \
+            --bundle --format=esm --platform=browser --minify \
+            --log-level=warning --outfile="$V/transformers.bundle.js"
+
+          ORT_PKG="$(find /tmp/libs/node_modules -path '*/onnxruntime-web/package.json' -print -quit)"
+          if [ -z "$ORT_PKG" ]; then
+            echo "ERROR: Could not find onnxruntime-web package"
+            exit 1
           fi
-          ORT_PKG=$(find /tmp/libs/node_modules/@huggingface/transformers/node_modules -maxdepth 2 -path "*onnxruntime-web/package.json" 2>/dev/null | head -1)
-          [ -z "$ORT_PKG" ] && ORT_PKG=/tmp/libs/node_modules/onnxruntime-web/package.json
-          ORT_DIR=$(dirname "$ORT_PKG")/dist
-          cp "$ORT_DIR"/ort-wasm*.wasm $V/ort/
-          cp "$ORT_DIR"/ort-wasm*.mjs $V/ort/ 2>/dev/null || true
+          ORT_DIR="$(dirname "$ORT_PKG")/dist"
+          find "$ORT_DIR" -maxdepth 1 -type f \( -name 'ort-wasm*.wasm' -o -name 'ort-wasm*.mjs' \) -exec cp -t "$V/ort" {} +
+          test -n "$(find "$V/ort" -type f -print -quit)"
 
-      - name: Copy OCR engine (Tesseract.js) and language data
+      - name: Copy OCR engine and Arabic/English language data
         run: |
-          set -e
-          V=docs/vendor
-          mkdir -p $V/tesseract $V/tessdata
-          cp /tmp/libs/node_modules/tesseract.js/dist/tesseract.min.js $V/tesseract/
-          cp /tmp/libs/node_modules/tesseract.js/dist/worker.min.js $V/tesseract/
-          CORE=$(dirname $(find /tmp/libs/node_modules -path "*tesseract.js-core/package.json" | head -1))
-          cp "$CORE"/tesseract-core*.wasm.js $V/tesseract/
-          cp "$CORE"/tesseract-core*.wasm $V/tesseract/ 2>/dev/null || true
+          set -euo pipefail
+          V="$GITHUB_WORKSPACE/docs/vendor"
+          TESS="$V/tesseract"
+          DATA="$V/tessdata"
+          mkdir -p "$TESS" "$DATA"
+
+          cp /tmp/libs/node_modules/tesseract.js/dist/tesseract.min.js "$TESS/"
+          cp /tmp/libs/node_modules/tesseract.js/dist/worker.min.js "$TESS/"
+
+          CORE_PKG="$(find /tmp/libs/node_modules -path '*/tesseract.js-core/package.json' -print -quit)"
+          if [ -z "$CORE_PKG" ]; then
+            echo "ERROR: Could not find tesseract.js-core package"
+            exit 1
+          fi
+          CORE="$(dirname "$CORE_PKG")"
+          cp "$CORE"/tesseract-core*.wasm.js "$TESS/"
+          cp "$CORE"/tesseract-core*.wasm "$TESS/" 2>/dev/null || true
+
           for L in eng ara; do
-            F=$(find /tmp/libs/node_modules/@tesseract.js-data/$L -name "$L.traineddata.gz" 2>/dev/null | grep best_int | head -1 || true)
-            [ -z "$F" ] && F=$(find /tmp/libs/node_modules/@tesseract.js-data/$L -name "$L.traineddata.gz" 2>/dev/null | head -1 || true)
-            if [ -n "$F" ]; then
-              cp "$F" $V/tessdata/$L.traineddata.gz
-            else
-              curl -fsSL "https://github.com/tesseract-ocr/tessdata_fast/raw/main/$L.traineddata" | gzip -9 > $V/tessdata/$L.traineddata.gz
+            F="$(find "/tmp/libs/node_modules/@tesseract.js-data/$L" -name "$L.traineddata.gz" -print 2>/dev/null | grep 'best_int' | head -n 1 || true)"
+            if [ -z "$F" ]; then
+              F="$(find "/tmp/libs/node_modules/@tesseract.js-data/$L" -name "$L.traineddata.gz" -print -quit 2>/dev/null || true)"
             fi
+            if [ -n "$F" ]; then
+              cp "$F" "$DATA/$L.traineddata.gz"
+            else
+              curl -fL --retry 3 "https://github.com/tesseract-ocr/tessdata_fast/raw/main/$L.traineddata" -o "/tmp/$L.traineddata"
+              gzip -9 -c "/tmp/$L.traineddata" > "$DATA/$L.traineddata.gz"
+            fi
+            test -s "$DATA/$L.traineddata.gz"
           done
 
-      - name: Show site contents
+      - name: Verify required files
         run: |
-          du -sh docs
-          ls -lah docs/vendor docs/vendor/ort docs/vendor/tesseract docs/vendor/tessdata
+          set -e
+          test -s docs/vendor/transformers.bundle.js
+          test -s docs/vendor/tesseract/tesseract.min.js
+          test -s docs/vendor/tesseract/worker.min.js
+          test -s docs/vendor/tessdata/eng.traineddata.gz
+          test -s docs/vendor/tessdata/ara.traineddata.gz
+          find docs/vendor -maxdepth 3 -type f -printf '%p (%s bytes)\n' | sort
+          du -sh docs/vendor
 
-      - uses: actions/configure-pages@v5
-
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: docs
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Commit generated files to main
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/vendor
+          if git diff --cached --quiet; then
+            echo "No generated files changed; nothing to commit."
+            exit 0
+          fi
+          git commit -m "Prepare offline translation and OCR libraries"
+          git push origin HEAD:main
